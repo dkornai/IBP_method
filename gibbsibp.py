@@ -156,8 +156,10 @@ class UncollapsedGibbsIBP(nn.Module):
         e = torch.matmul(Z, Y)
 
         # Compute probabilities in a vectorized manner
-        p_x1 = (1 - (1 - lamb) ** e) * (1 - ep)  # Probabilities when x_nd = 1
-        p_x0 = ((1 - lamb) ** e) * (1 - ep)      # Probabilities when x_nd = 0
+        p_x1 = (1 - ((1 - lamb) ** e) * (1 - ep))  # Probabilities when x_nd = 1
+               #(1 - ((1 - lamb) **e_n)* (1 - ep))
+        p_x0 = ((1 - lamb) ** e * (1 - ep))      # Probabilities when x_nd = 0
+               #((1 - lamb) ** e_n* (1 - ep))
 
         # Avoid log(0) by clamping probabilities
         #p_x1 = torch.clamp(p_x1, min=1e-12)
@@ -188,30 +190,39 @@ class UncollapsedGibbsIBP(nn.Module):
         
         m = Z_k.sum() - Z_k[i] # Called m_-nk in the paper
 
+        # Store the current value of Z_ik
+        Z_ik = Z[i,k]
+
         # If Z_nk were 0
-        Z_if_0 = Z.clone()
-        Z_if_0[i,k] = 0
+        #Z_if_0 = Z.clone()
+        Z[i,k] = 0
         
-        log_prior_if_0 = (1 - (m/(N-1))).log() #Prior
-        F_log_likelihood_if_0 = self.F_loglik_given_ZA(F,Z_if_0,A) # Likelihood of F
-        X_log_likelihood_if_0 = self.X_loglik_given_ZY(X,Z_if_0,Y) # Likelihood of X
+        log_prior_if_0 = (1 - (m/(N))).log()                #Prior Maybe should use N-1 instead of N?
+        F_log_likelihood_if_0 = self.F_loglik_given_ZA(F,Z,A) # Likelihood of F
+        X_log_likelihood_if_0 = self.X_loglik_given_ZY(X,Z,Y) # Likelihood of X
 
         log_score_if_0 = log_prior_if_0 + F_log_likelihood_if_0 + X_log_likelihood_if_0
 
         # If Z_nk were 1
-        Z_if_1 = Z.clone()
-        Z_if_1[i,k]=1
+        #Z_if_1 = Z.clone()
+        Z[i,k] = 1
         
-        log_prior_if_1 = (m/(N-1)).log() # Prior
-        F_log_likelihood_if_1 = self.F_loglik_given_ZA(F,Z_if_1,A) # Likelihood of F  
-        X_log_likelihood_if_1 = self.X_loglik_given_ZY(X,Z_if_1,Y) # Likelihood of X
+        log_prior_if_1 = (m/(N)).log()                      # Prior
+
+        F_log_likelihood_if_1 = self.F_loglik_given_ZA(F,Z,A) # Likelihood of F  
+        X_log_likelihood_if_1 = self.X_loglik_given_ZY(X,Z,Y) # Likelihood of X
       
         log_score_if_1 = log_prior_if_1 + F_log_likelihood_if_1 + X_log_likelihood_if_1
 
         # Exp, Normalize, Sample
-        log_scores = torch.cat((log_score_if_0,log_score_if_1),dim=0)
-        probs = self.renormalize_log_probs(log_scores)
-        p_znk = Bern(probs[1])
+        # log_scores = torch.cat((log_score_if_0,log_score_if_1),dim=0)
+        # probs = self.renormalize_log_probs(log_scores)
+        # p_znk = Bern(probs[1])
+        p0, p1 = self.renormalize_log_prob_pair(log_score_if_0, log_score_if_1)
+        p_znk = Bern(p1)
+        
+        # Change Z back to the original value
+        Z[i,k] = Z_ik
 
         return p_znk.sample() # 0 or 1
 
@@ -221,6 +232,15 @@ class UncollapsedGibbsIBP(nn.Module):
         likelihoods = log_probs.exp()
         return likelihoods / likelihoods.sum()
 
+    def renormalize_log_prob_pair(self, log_prob_0, log_prob_1):
+        """
+        Normalize two log probabilities in a pair. This is useful when we have two log probabilities that are
+        extremely small and would underflow if exponentiated directly.
+        """
+        max_p = torch.max(log_prob_0, log_prob_1)
+        log_Z = max_p + torch.log(torch.exp(log_prob_0 - max_p) + torch.exp(log_prob_1 - max_p))
+        
+        return torch.exp(log_prob_0 - log_Z), torch.exp(log_prob_1 - log_Z)
 
     def F_loglik_given_k_new(self,cur_F_minus_ZA,Z,D,i,j):
         '''
@@ -380,12 +400,14 @@ class UncollapsedGibbsIBP(nn.Module):
             for k in range(K):
                 Z[i,k] = self.resample_Z_ik(Z,F,X,A,Y,i,k)
             
+            k_new = 0
+            current_k = A.size()[0]
+            if current_k < self.max_K:
             # Decide how many new features to draw
-            k_new = self.sample_k_new(Z,F,X,A,Y,i)
+                k_new = self.sample_k_new(Z,F,X,A,Y,i)
 
-            # Limit such that current_k + k_new <= max_K
-            # current_k = A.size()[0]
-            # k_new = np.clip(k_new, 0, self.max_K - current_k)
+                # Limit such that current_k + k_new <= max_K
+                k_new = np.clip(k_new, 0, self.max_K - current_k)
 
             # If new features are drawn, add them to Z, A, and Y
             if k_new > 0:
@@ -493,10 +515,11 @@ class UncollapsedGibbsIBP(nn.Module):
                         temp_lpY_a1 = prior_Y_a1 + log_likelihood
 
                 # Normalise in log space to avoid underflows
-                max_p = torch.max(temp_lpY_a0, temp_lpY_a1)
-                log_Z = max_p + torch.log(torch.exp(temp_lpY_a0 - max_p) + torch.exp(temp_lpY_a1 - max_p))
-                pY_a0[k, t] = torch.exp(temp_lpY_a0 - log_Z)
-                pY_a1[k, t] = torch.exp(temp_lpY_a1 - log_Z)
+                # max_p = torch.max(temp_lpY_a0, temp_lpY_a1)
+                # log_Z = max_p + torch.log(torch.exp(temp_lpY_a0 - max_p) + torch.exp(temp_lpY_a1 - max_p))
+                # pY_a0[k, t] = torch.exp(temp_lpY_a0 - log_Z)
+                # pY_a1[k, t] = torch.exp(temp_lpY_a1 - log_Z)
+                pY_a0[k, t], pY_a1[k, t] = self.renormalize_log_prob_pair(temp_lpY_a0, temp_lpY_a1)
 
                 # Sample the element
                 p_Ykt = Bern(pY_a1[k, t])
