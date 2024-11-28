@@ -565,3 +565,11 @@ class UncollapsedGibbsIBP(nn.Module):
             Ys.append(Y.clone().numpy())
 
         return As,Zs,Ys
+
+
+# Import cProfile
+# inf = UncollapsedGibbsIBP(alpha=0.05, K=1, max_K=4, sigma_a=0.2, sigma_n=0.1, epsilon=0.05, lambd=0.99, phi=0.25)
+# with cProfile.Profile() as pr:
+#     As, Zs, Ys = inf.gibbs(F_dataset, X_dataset, 5)
+
+# pr.print_stats(sort='cumtime')

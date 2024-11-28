@@ -33,3 +33,19 @@ def compare_distance(reference_matrix, inferred_matrix):
         permutation_matrix[i, col_ind[i]] = 1
 
     return permutation_matrix
+
+# def add_noise_to_obs(X, F, F_noise_std = 0.01, lambd=0.98, epsilon=0.02):
+#     """
+#     Add gaussian noise to force data, and randomly flip pixels in the observation data
+#     """
+#     F += torch.randn(F.size()) * F_noise_std
+    
+#     X_noisy = torch.zeros(X.size())
+#     for i in range(X.size()[0]):
+#         for j in range(X.size()[1]):
+#             if X[i, j] == 1:
+#                 X_noisy[i, j] = 1 if random() < lambd else 0
+#             else:
+#                 X_noisy[i, j] = 1 if random() < epsilon else 0
+
+#     return X_noisy, F
