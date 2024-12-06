@@ -1,4 +1,6 @@
 import numpy as np
+from numpy.random import random
+import torch
 from scipy.optimize import linear_sum_assignment
 
 def extract_mean_from_samples(As, Zs, Ys, n=10):
@@ -34,18 +36,29 @@ def compare_distance(reference_matrix, inferred_matrix):
 
     return permutation_matrix
 
-# def add_noise_to_obs(X, F, F_noise_std = 0.01, lambd=0.98, epsilon=0.02):
-#     """
-#     Add gaussian noise to force data, and randomly flip pixels in the observation data
-#     """
-#     F += torch.randn(F.size()) * F_noise_std
+def add_noise_to_obs(X, F, F_noise_std = 0.01, lambd=0.98, epsilon=0.02):
+    """
+    Add gaussian noise to force data, and randomly flip pixels in the observation data
     
-#     X_noisy = torch.zeros(X.size())
-#     for i in range(X.size()[0]):
-#         for j in range(X.size()[1]):
-#             if X[i, j] == 1:
-#                 X_noisy[i, j] = 1 if random() < lambd else 0
-#             else:
-#                 X_noisy[i, j] = 1 if random() < epsilon else 0
+    Parameters: 
+    X: torch.tensor, the observation data
+    F: torch.tensor, the force data
+    F_noise_std: float, the standard deviation of the gaussian noise added to the force data
+    lambd: float, the probability of a 1 in the observation data being flipped to 0
+    epsilon: float, the probability of a 0 in the observation data being flipped to 1
 
-#     return X_noisy, F
+    Returns:
+    X_noisy: torch.tensor, the noisy observation data
+    F: torch.tensor, the noisy force
+    """
+    F += torch.randn(F.size()) * F_noise_std
+    
+    X_noisy = torch.zeros(X.size())
+    for i in range(X.size()[0]):
+        for j in range(X.size()[1]):
+            if X[i, j] == 1:
+                X_noisy[i, j] = 1 if random() < lambd else 0
+            else:
+                X_noisy[i, j] = 1 if random() < epsilon else 0
+
+    return X_noisy, F
