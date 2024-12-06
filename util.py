@@ -57,8 +57,14 @@ def add_noise_to_obs(X, F, F_noise_std = 0.01, lambd=0.98, epsilon=0.02):
     for i in range(X.size()[0]):
         for j in range(X.size()[1]):
             if X[i, j] == 1:
-                X_noisy[i, j] = 1 if random() < lambd else 0
+                if random() < lambd: # flip the pixel off with probability 1-lambd
+                    X_noisy[i, j] = 1
+                else:
+                    X_noisy[i, j] = 0
             else:
-                X_noisy[i, j] = 1 if random() < epsilon else 0
+                if random() < epsilon: # flip the pixel on with probability epsilon
+                    X_noisy[i, j] = 1
+                else:
+                    X_noisy[i, j] = 0
 
     return X_noisy, F
