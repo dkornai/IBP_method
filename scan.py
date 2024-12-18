@@ -115,7 +115,7 @@ for alpha in alpha_list:
     for sigma_n in sigma_n_list:
         for epsilon, lambd in zip(epsilon_list, lambd_list):
                 print(f"\nStarting analysis {i}/144")
-                print(f"sigma_n: {sigma_n}, epsilon: {epsilon}, lambd: {lambd}")
+                print(f"alpha: {alpha}, sigma_n: {sigma_n}, epsilon: {epsilon}, lambd: {lambd}")
                 
                 X_dataset, F_dataset = generate_input_data(seq_1)
                 # add noise to the observation data
