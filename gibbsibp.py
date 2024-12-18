@@ -8,24 +8,18 @@ from torch.distributions import Categorical as Categorical
 import numpy as np
 
 class UncollapsedGibbsIBP(nn.Module):
-    ################################################
-    ########### UNCOLLAPSED GIBBS SAMPLER ##########
-    ################################################
-    ### Depends on a few self parameters but could##
-    ### be made a standalone script if need be #####
-    ###############################################
     def __init__(self, alpha, K, max_K, sigma_a, sigma_n, epsilon, lambd, phi):
         super(UncollapsedGibbsIBP, self).__init__()
 
         # idempotent - all are constant and have requires_grad=False
-        self.alpha = torch.tensor(alpha)
-        self.K = torch.tensor(K)
-        self.max_K = torch.tensor(max_K)
-        self.sigma_a = torch.tensor(sigma_a)
-        self.sigma_n = torch.tensor(sigma_n)
-        self.epsilon = torch.tensor(epsilon)
-        self.lambd = torch.tensor(lambd)
-        self.phi = torch.tensor(phi)
+        self.K = torch.tensor(K)                # current number of context features
+        self.max_K = torch.tensor(max_K)        # maximum number of context features
+        self.alpha = torch.tensor(alpha)        # propensity to add new context features
+        self.sigma_a = torch.tensor(sigma_a)    # variance of the force prior
+        self.sigma_n = torch.tensor(sigma_n)    # force noise
+        self.epsilon = torch.tensor(epsilon)    # pixel noise (probability of spontaneous activation)
+        self.lambd = torch.tensor(lambd)        # pixel noise (probability of successful activation)
+        self.phi = torch.tensor(phi)            # expected number of pixels activated by a new feature
 
     def init_A(self,K,D):
         '''
