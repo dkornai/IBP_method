@@ -64,9 +64,9 @@ conditions.append({'force':np.array([ 0.866025404, -0.5]),  'cue':np.array([0., 
 conditions.append({'force':np.array([ 0, 1]),               'cue':np.array([1., 0., 1., 0.,]), 'name':'Comp. visual+/dynamic+'})
 conditions.append({'force':np.array([-0.866025404, -0.5]),  'cue':np.array([0., 1., 1., 0.,]), 'name':'Comp. visual+/dynamic-'})
 
-# temporary division by 4, to make the model converge
-for condition in conditions:
-    condition['force'] = condition['force']/4
+# # temporary division by 4, to make the model converge
+# for condition in conditions:
+#     condition['force'] = condition['force']/4
 
 true_A = []
 true_Y = []
@@ -103,18 +103,19 @@ print(len(seq_1))
 times = []
 
 ## Add noise to the observation data
-sigma_a_list = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5]
+SIGMA_A = 1.0
+alpha_list   = [0.01, 0.02, 0.05, 0.1]
 sigma_n_list = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5]
 epsilon_list = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5]
-lambd_list   = [0.99, 0.98, 0.95, 0.9, 0.8, 0.5]
+lambd_list   = [1-x for x in epsilon_list]
 
 i = 1
-for sigma_a in sigma_a_list:
+
+for alpha in alpha_list:
     for sigma_n in sigma_n_list:
-        for epsilon in epsilon_list:
-            for lambd in lambd_list:
-                print(f"\nStarting analysis {i}/6480")
-                print(f"sigma_a: {sigma_a}, sigma_n: {sigma_n}, epsilon: {epsilon}, lambd: {lambd}")
+        for epsilon, lambd in zip(epsilon_list, lambd_list):
+                print(f"\nStarting analysis {i}/144")
+                print(f"sigma_n: {sigma_n}, epsilon: {epsilon}, lambd: {lambd}")
                 
                 X_dataset, F_dataset = generate_input_data(seq_1)
                 # add noise to the observation data
@@ -122,11 +123,11 @@ for sigma_a in sigma_a_list:
                     X_dataset, F_dataset, F_noise_std=sigma_n, lambd=lambd, epsilon=epsilon)
                 # initialize the model
                 inf = UncollapsedGibbsIBP(
-                    alpha=0.05, K=1, max_K=6, sigma_a=sigma_a, sigma_n=sigma_n, epsilon=epsilon, lambd=lambd, phi=0.25)
+                    alpha=alpha, K=1, max_K=6, sigma_a=SIGMA_A, sigma_n=sigma_n, epsilon=epsilon, lambd=lambd, phi=0.25)
                 # run the model
                 start_time = time.time()
                 
-                As, Zs, Ys = inf.gibbs(F_dataset, X_dataset, iters = 100)
+                As, Zs, Ys = inf.gibbs(F_dataset, X_dataset, iters = 300)
                 
                 end_time = time.time()
                 
@@ -134,7 +135,7 @@ for sigma_a in sigma_a_list:
                 total_time = np.round(end_time - start_time,1)
                 times.append(total_time)
                 avg_time = np.round(np.mean(times), 1)
-                print(f"Current runtime: {total_time}, average runtime: {avg_time}s,  projected time remaining: {np.round(avg_time*(6480-i)/3600)} hours")
+                print(f"Current runtime: {total_time}, average runtime: {avg_time}s,  projected time remaining: {np.round(avg_time*(144-i)/3600)} hours")
 
                 # save the results
                 os.chdir('paramscan')
