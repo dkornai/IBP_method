@@ -1,0 +1,159 @@
+\documentclass[]{article}
+\usepackage{amsmath}
+\usepackage{geometry}
+\geometry{legalpaper, portrait, margin=1in}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+
+%opening
+\title{}
+\author{}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+
+\end{abstract}
+
+\section{Algorithm for Gibbs Sampler}
+\begin{algorithm}[H]
+	\caption{Gibbs sampler}
+	\begin{algorithmic}[1]
+		\REQUIRE Force observations $\mathbf{F}$, Visual observations $\mathbf{X}$
+		\STATE $ \mathbf{Z} \gets P(\mathbf{Z})$ \hfill \COMMENT{Initialise feature ownership matrix $\mathbf{Z}$ from the prior}
+		\STATE $ \mathbf{A} \gets P(\mathbf{A})$ \hfill \COMMENT{Initialise force basis matrix $\mathbf{A}$ from the prior}
+		\STATE $ \mathbf{Y} \gets P(\mathbf{Y})$ \hfill \COMMENT{Initialise image filter basis matrix $\mathbf{Y}$ from the prior}
+		
+		\WHILE{gathering posterior samples}
+			\STATE $\mathbf{A} \gets p(\mathbf{A}|\mathbf{F}, \mathbf{Z})$ \hfill \COMMENT{Resample $\mathbf{A}$ according to Eq. \ref{eq:posterior_A}}
+			\FORALL{$y_{k,t} \in \mathbf{Y}$}
+				\STATE $y_{k,t} \gets P(y_{kt}|\mathbf{Z}, \mathbf{X}, \mathbf{Y}_{-k,t})$ \hfill \COMMENT {Resample each element of $\mathbf{Y}$ according to Eq. \ref{eq:posterior_Ykt}}
+			\ENDFOR
+			\FOR{$i = 1$ to $N$}
+				\FOR{$k = 1$ to $K$} 
+					\STATE $z_{i,k} \gets P(z_{i,k}|\mathbf{f}_{i,:}, \mathbf{x}_{i,:}, \mathbf{A}, \mathbf{Y}, \mathbf{Z}_{-i,k})$ \hfill \COMMENT{Resample existing $z_{i,k}$ according to Eq. \ref{eq:posterior_Zik}}
+				\ENDFOR
+				\STATE $K^{new}_i \gets P(K^{new}_i | \mathbf{x}_{i,:},  \mathbf{f}_{i,:}, \mathbf{z}_{i,: }, \mathbf{Y}, \mathbf{A})$ \hfill \COMMENT{Sample $k^{new}_i $ according to Eq. \ref{eq:posterior_Knew}}
+				\IF{$k^{new}_i > 0$}
+					\STATE $\mathbf{Z}_{new} \gets FIX$\hfill  \COMMENT{Get new columns for $\mathbf{Z}$, each with a $1$ at row $i$}
+					\STATE  $\mathbf{A}_{new} \gets p(\mathbf{A}_{new}| \mathbf{F}, \mathbf{Z}_{new}, \mathbf{Z}, \mathbf{A})$ \hfill \COMMENT{Get new rows for $\mathbf{A}$, sampled from Eq. \ref{eq:posterior_Anew}}
+					\STATE $\mathbf{Z} \gets [ \mathbf{Z}, \mathbf{Z}_{new}]$\hfill \COMMENT{Expand $\mathbf{Z}$ with the new columns}
+					\STATE $\mathbf{A} \gets [ \mathbf{A}; \mathbf{A}_{new}]$ \hfill \COMMENT{Expand $\mathbf{A}$ with the new rows}
+					\STATE $\mathbf{Y}_{new} \gets 0_{k^{new}_i  \times T} $  \hfill \COMMENT{Get new empty rows for $\mathbf{Y}$}
+					\STATE $\mathbf{Y} \gets [ \mathbf{Y}; \mathbf{Y}_{new}]$ \hfill \COMMENT{Expand $\mathbf{Y}$ with the new rows}
+					\FORALL{$y_{k,t} \in \mathbf{Y}_{K+1:K+k^{new}_i},:$}
+						\STATE $y_{k,t} \gets P(y_{kt}|\mathbf{Z}, \mathbf{X}, \mathbf{Y}_{-k,t})$ \hfill \COMMENT {Resample the new empty parts of $\mathbf{Y}$ according to Eq. \ref{eq:posterior_Ykt}}
+					\ENDFOR
+					\STATE $K \gets K + K^{new}_i$ 
+				\ENDIF
+			\ENDFOR
+
+		\ENDWHILE
+	\end{algorithmic}
+	\label{alg:gs}
+\end{algorithm}
+
+
+\section{Prior, Likelihood, and Posterior Terms}
+
+\subsection{Posterior $p(\mathbf{A}|\mathbf{F}, \mathbf{Z})$}
+Given the observed forces $\mathbf{F}$, and the binary feature ownership matrix $\mathbf{Z}$, the posterior $\mathbf{A}$ for existing features is sampled from from the following Gaussian 
+	\begin{equation}\label{eq:posterior_A}
+		p(\mathbf{A}|\mathbf{F}, \mathbf{Z}) \sim \mathcal{N}\left( \left(\mathbf{Z}^T \mathbf{Z} + \frac{\sigma^2_n}{\sigma^2_A}\mathbf{I}\right)^{-1} \mathbf{Z}^T \mathbf{F} , \sigma^2_n \left(\mathbf{Z}^T \mathbf{Z} + \frac{\sigma^2_n}{\sigma^2_A}\mathbf{I}\right)^{-1}  \right)
+	\end{equation}
+
+
+\subsection{Posterior $P(y_{k,t}|\mathbf{Z}, \mathbf{X}, \mathbf{Y}_{-k,t})$}
+When performing updates to $\mathbf{y}_{:,t}$, the $t$-th column of the image filter basis matrix $\mathbf{Y}$, this impacts the $t$-th column of the reconstructed images. Accordingly, the posterior from proportional is
+\begin{align}
+	\begin{split}\label{eq:posterior_Ykt}
+		&P(y_{k,t}=a|\mathbf{Z}, \mathbf{X}, \mathbf{Y}_{-k,t}) \\
+		&\quad \propto P(y_{k,t}=a) P(\mathbf{x}_{:,t}|\mathbf{Z}, \mathbf{y}_{:,t})|_{y_{k,t}=a} \\
+	\end{split}
+\end{align}
+
+The prior is defined using the hyperparameter $\phi$ as 
+\begin{align}
+	P(y_{k,t}=a) = \phi^a (1-\phi)^{1-a}
+\end{align}
+
+And the likelihood is:
+\begin{align}
+	\begin{split}\label{eq:lik_pxt}
+		&P(\mathbf{x}_{:,t}|\mathbf{Z}, \mathbf{y}_{:,t}) =\prod_{i=1}^{N} \left[1 - (1-\lambda)^{\mathbf{z}_{i,:}\mathbf{y}_{:,t}}(1-\epsilon)\right]^{x_{i,t}} \times \left[ (1-\lambda)^{\mathbf{z}_{i,:}\mathbf{y}_{:,t}}(1-\epsilon)\right]^{1 - x_{i,t}} 
+	\end{split}
+\end{align}
+
+ $|_{y_{k,t}=a}$ denotes carrying out the calculation with $y_{k,t}$ temporarily set to $a$.
+
+\subsection{Posterior $P(z_{i,k}|\mathbf{f}_{i,:}, \mathbf{x}_{i,:}, \mathbf{A}, \mathbf{Y}, \mathbf{Z}_{-i,k})$}
+As our force and image observations are conditionally independent given $\mathbf{Z}$, our posterior proportional is
+	\begin{align}
+		\begin{split}\label{eq:posterior_Zik}
+			&P(z_{i,k}=a|\mathbf{f}_{i,:}, \mathbf{x}_{i,:}, \mathbf{A}, \mathbf{Y}, \mathbf{Z}_{-i,k}) \\
+			&\quad \propto P(z_{i,k}=a| \mathbf{Z}_{-i,k}) P(\mathbf{x}_{i,:}|\mathbf{Y}, \mathbf{z}_{i,:})  p(\mathbf{f}_{i,:}|\mathbf{A}, \mathbf{z}_{i,:})|_{z_{i,k}=a} 
+		\end{split}
+	\end{align}
+
+The prior $P(z_{i,k}=a| \mathbf{Z}_{-i,k})$ is defined with $m_{-i,k} = \sum_{j\not=i}^{N} z_{j,k}$ as
+\begin{align}
+	P(z_{i,k}=a| \mathbf{Z}_{-i,k}) = (\frac{m_{-i,k}}{N})^a (1 - \frac{m_{-i,k}}{N})^{1-a}
+\end{align}
+
+
+The likelihood term for the visual observation is $P(\mathbf{x}_{i,:}|\mathbf{Y}, \mathbf{z}_{i,:})$ is 
+\begin{align}
+	&P(\mathbf{x}_{i,:}|\mathbf{Y}, \mathbf{z}_{i,:}) = \prod_{t=1}^{T} \left[1 - (1-\lambda)^{\mathbf{z}_{i,:}\mathbf{y}_{:,t}}(1-\epsilon)\right]^{x_{i,t}} \times \left[ (1-\lambda)^{\mathbf{z}_{i,:}\mathbf{y}_{:,t}}(1-\epsilon)\right]^{1 - x_{i,t}} 
+\end{align}
+
+\noindent and the likelihood term for the force observation is $p(\mathbf{f}_{i,:}|\mathbf{A}, \mathbf{z}_{i,:})$ is simply
+\begin{align}
+	&p(\mathbf{f}_{i,:}|\mathbf{A}, \mathbf{z}_{i,:}) = \frac{1}{(2\pi\sigma^2_n)^{D/2}} \exp \left(-\frac{1}{2\sigma^2_n} (\mathbf{f}_{i,:} - \mathbf{z}_{i,:} \mathbf{A})^T (\mathbf{f}_{i,:} - \mathbf{z}_{i,:} \mathbf{A}) \right)
+\end{align}
+
+As previously, The symbol $|_{z_{i,k}=a}$ denotes carrying out the calculation with $z_{i,k}$ temporarily set to $a$.
+
+\subsection{Posterior $P(K^{new}_i | \mathbf{x}_{i,:},  \mathbf{f}_{i,:}, \mathbf{z}_{i,: }, \mathbf{Y}, \mathbf{A}) $}
+During the process of sampling, it might be necessary to increase the number of latent features. As new features is initially only active for the $i$-th row of $\mathbf{z}$, we only need to consider how this effects the $i$-th observation. 
+	\begin{align}
+		\begin{split}\label{eq:posterior_Knew}
+		&P(K^{new}_i | \mathbf{x}_{i,:},  \mathbf{f}_{i,:}, \mathbf{z}_{i,: }, \mathbf{Y}, \mathbf{A}) \\
+		&\quad \propto P(k^{new}_i) P(\mathbf{x}_{i,:}| \mathbf{z}_{i,:}, \mathbf{Y}, K^{new}_i) p(\mathbf{f}_{i,:}|\mathbf{z}_{i,:}, \mathbf{A}, K^{new}_i)
+	\end{split}
+	\end{align}
+
+The prior $P(k^{new}_i)$ is simply a Poisson:
+\begin{align}
+	P(k^{new}_i) = \text{Pois}\left(\frac{\alpha}{N}\right)
+\end{align}
+	
+The likelihood term for the visual observations
+	\begin{align}
+		\begin{split}
+			&P(\mathbf{x}_{i,:}| \mathbf{z}_{i,:}, \mathbf{Y}, K^{new}_i) \\
+			&\quad=  \prod_{t=1}^{T} \left[1 - (1-\epsilon)(1-\lambda)^{\mathbf{z}_{i,:}\mathbf{y}_{:,t}}(1-\lambda\phi)^{K^{new}_i}\right]^{x_{i,t}} \times \left[ (1-\epsilon)(1-\lambda)^{\mathbf{z}_{i,:}\mathbf{y}_{:,t}}(1-\lambda\phi)^{K^{new}_i}\right]^{1 - x_{i,t}} 
+		\end{split}
+	\end{align}
+	
+To derive the likelihood for the force observations, 
+ 	\begin{align}
+ 		\begin{split}
+ 			&p(\mathbf{f}_{i,:}|\mathbf{z}_{i,:}, \mathbf{A}, K^{new}_i) = \int p(\mathbf{f}_{i,:}|\mathbf{z}_{i,:}, \mathbf{A}, \mathbf{A}_{new}, K^{new}_i)p(\mathbf{A}_{new}) \text{d} \mathbf{A}_{new} \\
+ 			&\quad= \frac{1}{\sqrt{(2\pi)^D |1_{k_{new}\times k_{new}} + \frac{\sigma^2_n}{\sigma^2_A}\mathbf{I}|}}	\exp \left(-\frac{1}{2} (\mathbf{f}_{i,:} - \mathbf{z}_{i,:} \mathbf{A})^T \left(1_{k_{new}\times k_{new}} + \frac{\sigma^2_n}{\sigma^2_A}\mathbf{I}\right)^{-1} (\mathbf{f}_{i,:} - \mathbf{z}_{i,:} \mathbf{A}) \right)
+ 		\end{split}
+ 	\end{align}
+
+	
+\subsection{Posterior $p(\mathbf{A}_{new}| \mathbf{F}, \mathbf{Z}_{new}, \mathbf{Z}, \mathbf{A})$}
+	When $k_{new}$ features were added to $\mathbf{Z}$ in the form of $\mathbf{Z}_{new}$, $\mathbf{A}$ must also be expanded with $k_{new}$ rows. 
+	\begin{align}
+		\begin{split}\label{eq:posterior_Anew}
+			&p(\mathbf{A}_{new}| \mathbf{F}, \mathbf{Z}_{new}, \mathbf{Z}, \mathbf{A}) \\
+			&\quad \propto p(A_{new}) p(\mathbf{F} | \mathbf{Z}_{new}, \mathbf{Z}, \mathbf{A}, \mathbf{A}_{new}) \\
+			&\quad \sim \mathcal{N}\left( \left(1_{k_{new}\times k_{new}}  + \frac{\sigma^2_n}{\sigma^2_A}\mathbf{I}\right)^{-1} \mathbf{Z}^T_{new} (\mathbf{F} - \mathbf{Z} \mathbf{A}), \sigma^2_n \left(1_{k_{new}\times k_{new}}  + \frac{\sigma^2_n}{\sigma^2_A}\mathbf{I}\right)^{-1}  \right)
+		\end{split}
+	\end{align}
+
+\end{document}
