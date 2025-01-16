@@ -68,13 +68,13 @@ where we assumed the independence structure shown in the graphical model of Fig.
 
 Our prior expectation is that rows of $\mathbf{A}$ are drawn from $\mathcal{N}(0, \sigma^2_A \mathbf{I})$. Forces are assumed to be observed under a linear Gaussian model where the hyperparameter $\sigma^2_n$ controls the magnitude of observation noise. 
 \begin{equation*}
-	f_{n,:} = \mathbf{x}_{n,:}\mathbf{A} + \epsilon \sim \mathcal{N}(0, \sigma^2_n, \mathbf{I})
+	\mathbf{f}_{n,:} = \mathbf{z}_{n,:}\mathbf{A} + \epsilon \sim \mathcal{N}(0, \sigma^2_n, \mathbf{I})
 \end{equation*}
 
 Each element of $\mathbf{Y}$ is drawn independently as $y_{i,k} \sim \text{Bernoulli}(\phi)$. The entries of $\mathbf{X}$ are conditionally independent given the latents, and are assumed to be generated from a \textit{noisy-OR} distribution
-\begin{equation}
+\begin{equation*}
 	P(x_{i,t} = 1 | \mathbf{Z}, \mathbf{Y}) = 1 - (1-\lambda)^{\mathbf{z}_{i,:}\mathbf{y}_{:,t}}(1-\epsilon)
-\end{equation}
+\end{equation*}
 where $\mathbf{z}_{i,:}\mathbf{y}_{:,t} = \sum_{k=1}^{K} \mathbf{z}_{i,k}\mathbf{y}_{k,t}$ is the number of latent causes that have the $t$-th pixel as 1. $\epsilon$ is the baseline probability that $x_{i,t} = 1$, and $\lambda$ is the probability with which any of the hidden causes is effective in eliciting a visual signal. 
 
 While the number of rows for $\mathbf{Z}$ is fixed by the number of observations, the number of distinct visuo-motor contexts ($K$) required to effectively represent the set of experiences during the trial depend on the statistics of the data and the beliefs of the observer. To account for this, our prior distribution on $\mathbf{Z}$ utilises the Indian Buffet Process [IBP]. This allows us to sample from a distribution of sparse binary matrices with a fixed number of rows and a potentially infinite number of columns. The hyperparameter $\alpha$ controls our propensity to add new features (columns of $\mathbf{Z}$) during the learning process.
