@@ -1,17 +1,22 @@
 \relax 
-\@writefile{toc}{\contentsline {section}{\numberline {1}Algorithm for Gibbs Sampler}{1}{}\protected@file@percent }
-\@writefile{loa}{\contentsline {algorithm}{\numberline {1}{\ignorespaces Gibbs sampler}}{1}{}\protected@file@percent }
-\newlabel{alg:gs}{{1}{1}{}{}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {2}Prior, Likelihood, and Posterior Terms}{1}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {2.1}Posterior $p(\mathbf  {A}|\mathbf  {F}, \mathbf  {Z})$}{1}{}\protected@file@percent }
-\newlabel{eq:posterior_A}{{1}{1}{}{}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {2.2}Posterior $P(y_{k,t}|\mathbf  {Z}, \mathbf  {X}, \mathbf  {Y}_{-k,t})$}{1}{}\protected@file@percent }
-\newlabel{eq:posterior_Ykt}{{2}{1}{}{}{}}
-\newlabel{eq:lik_pxt}{{4}{1}{}{}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {2.3}Posterior $P(z_{i,k}|\mathbf  {f}_{i,:}, \mathbf  {x}_{i,:}, \mathbf  {A}, \mathbf  {Y}, \mathbf  {Z}_{-i,k})$}{2}{}\protected@file@percent }
-\newlabel{eq:posterior_Zik}{{5}{2}{}{}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {2.4}Posterior $P(K^{new}_i | \mathbf  {x}_{i,:}, \mathbf  {f}_{i,:}, \mathbf  {z}_{i,: }, \mathbf  {Y}, \mathbf  {A}) $}{2}{}\protected@file@percent }
-\newlabel{eq:posterior_Knew}{{9}{2}{}{}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {2.5}Posterior $p(\mathbf  {A}_{new}| \mathbf  {F}, \mathbf  {Z}_{new}, \mathbf  {Z}, \mathbf  {A})$}{2}{}\protected@file@percent }
-\newlabel{eq:posterior_Anew}{{13}{2}{}{}{}}
-\gdef \@abspage@last{2}
+\@writefile{toc}{\contentsline {section}{\numberline {1}Formulating The Problem}{1}{}\protected@file@percent }
+\newlabel{fig:graphmod}{{1}{1}{}{}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Graphical model illustrating dependencies among variables in the generative model.}}{1}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {2}Algorithm for Gibbs Sampler}{2}{}\protected@file@percent }
+\@writefile{loa}{\contentsline {algorithm}{\numberline {1}{\ignorespaces Outline for the Gibbs sampler $P(\mathbf  {Z}, \mathbf  {Y}, \mathbf  {A} | \mathbf  {X}, \mathbf  {F})$}}{2}{}\protected@file@percent }
+\newlabel{alg:gs}{{1}{2}{}{}{}}
+\@writefile{loa}{\contentsline {algorithm}{\numberline {2}{\ignorespaces Gibbs sampler for $P(\mathbf  {Z}, \mathbf  {Y}, \mathbf  {A} | \mathbf  {X}, \mathbf  {F})$}}{2}{}\protected@file@percent }
+\newlabel{alg:gso}{{2}{2}{}{}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {3}Posterior Terms Used During Sampling}{3}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.1}Posterior $p(\mathbf  {A}|\mathbf  {F}, \mathbf  {Z})$}{3}{}\protected@file@percent }
+\newlabel{eq:posterior_A}{{3}{3}{}{}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.2}Posterior $P(y_{k,t}|\mathbf  {Z}, \mathbf  {X}, \mathbf  {Y}_{-k,t})$}{3}{}\protected@file@percent }
+\newlabel{eq:posterior_Ykt}{{4}{3}{}{}{}}
+\newlabel{eq:lik_pxt}{{6}{3}{}{}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.3}Posterior $P(z_{i,k}|\mathbf  {f}_{i,:}, \mathbf  {x}_{i,:}, \mathbf  {A}, \mathbf  {Y}, \mathbf  {Z}_{-i,k})$}{3}{}\protected@file@percent }
+\newlabel{eq:posterior_Zik}{{7}{3}{}{}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.4}Posterior $P(K^{new}_i | \mathbf  {x}_{i,:}, \mathbf  {f}_{i,:}, \mathbf  {z}_{i,: }, \mathbf  {Y}, \mathbf  {A}) $}{3}{}\protected@file@percent }
+\newlabel{eq:posterior_Knew}{{11}{3}{}{}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.5}Posterior $p(\mathbf  {A}_{new}| \mathbf  {F}, \mathbf  {Z}_{new}, \mathbf  {Z}, \mathbf  {A})$}{4}{}\protected@file@percent }
+\newlabel{eq:posterior_Anew}{{15}{4}{}{}{}}
+\gdef \@abspage@last{4}
