@@ -73,3 +73,48 @@ def add_noise_to_obs(X, F, F_noise_var = 0.01, lambd=0.98, epsilon=0.02):
                     X_noisy[i, j] = 0
 
     return X_noisy, F
+
+
+def check_basis_elements(A, Y):
+    """
+    Of the six condtions, check which are basis elements in the inferred A and Y matrices
+    """
+    # Define the six conditions
+    element_base1_force      = np.array([-0.866025404, 0.5])
+    element_base1_cue        = np.array([1., 0., 0., 0.,])
+
+    element_base2_force      = np.array([0.866025404, 0.5])
+    element_base2_cue        = np.array([0., 0., 1., 0.,])
+
+    element_comp_vm_dm_force = np.array([ 0.,-1.])
+    element_comp_vm_dm_cue   = np.array([0., 1., 0., 0.,])
+
+    element_comp_vm_dp_force = np.array([ 0.866025404, -0.5])
+    element_comp_vm_dp_cue   = np.array([0., 0., 0., 1.,])
+
+    element_comp_vp_dp_force = np.array([ 0., 1.])
+    element_comp_vp_dp_cue   = np.array([1., 0., 1., 0.,])
+
+    element_comp_vp_dm_force = np.array([-0.866025404, -0.5])
+    element_comp_vp_dm_cue   = np.array([0., 1., 1., 0.,])
+
+    forces = [element_base1_force, element_base2_force, element_comp_vm_dm_force, element_comp_vm_dp_force, element_comp_vp_dp_force, element_comp_vp_dm_force]
+    cues   = [element_base1_cue, element_base2_cue, element_comp_vm_dm_cue, element_comp_vm_dp_cue, element_comp_vp_dp_cue, element_comp_vp_dm_cue]
+    names  = ['    base1', '    base2', 'vis-/dyn-', 'vis-/dyn+', 'vis+/dyn+', 'vis+/dyn-']
+
+    # Check if the conditions are basis elements
+    for i in range(6):
+        reference_force = forces[i]
+        reference_cue = cues[i]
+
+        basis = False
+        for j in range(len(A)):
+            a_row = A[j]
+            y_row = Y[j]
+        
+            if np.allclose(a_row, reference_force, atol=0.1) and np.allclose(y_row, reference_cue, rtol=0.1):
+                print(f'Element {names[i]} is basis')
+                basis = True
+        
+        if not basis:
+                print(f'Element {names[i]} not')
