@@ -8,55 +8,88 @@ from torch.distributions import Categorical as Categorical
 import numpy as np
 
 class UncollapsedGibbsIBP(nn.Module):
-    def __init__(self, alpha, K, max_K, sigma_a, sigma_n, epsilon, lambd, phi):
+    def __init__(self, K, max_K, alpha, sigma2_a, phi, sigma2_n, epsilon, lambd):
         super(UncollapsedGibbsIBP, self).__init__()
 
         # idempotent - all are constant and have requires_grad=False
-        self.K = torch.tensor(K)                # current number of context features
-        self.max_K = torch.tensor(max_K)        # maximum number of context features
+        self.K = K                              # current number of context features
+        self.max_K = max_K                      # maximum number of context features
         self.alpha = torch.tensor(alpha)        # propensity to add new context features
-        self.sigma_a = torch.tensor(sigma_a)    # variance of the force prior
-        self.sigma_n = torch.tensor(sigma_n)    # force noise
+        self.sigma2_a = torch.tensor(sigma2_a)  # variance of the force prior
+        self.sigma2_n = torch.tensor(sigma2_n)  # variance of the observation noise
         self.epsilon = torch.tensor(epsilon)    # pixel noise (probability of spontaneous activation)
-        self.lambd = torch.tensor(lambd)        # pixel noise (probability of successful activation)
+        self.lambd = torch.tensor(lambd)        # pixel noise (probability of successful activation, per active feature)
         self.phi = torch.tensor(phi)            # expected number of pixels activated by a new feature
 
-    def init_A(self,K,D):
+    def gibbs(self, F, X, iters):
+        """
+        Main function to run the Gibbs sampler for the IBP model.
+        """
+        n_obs_F, n_features = F.size()
+        n_obs_X, n_pixels   = X.size()
+        assert n_obs_X == n_obs_F, "Number of observations in X and F must match"
+        
+        self.N = n_obs_X
+        self.D = n_features
+        self.T = n_pixels
+        
+        # Initalize Z, A, and Y from the priors
+        Z = self.sample_Z_prior(self.N, self.K)
+        A = self.sample_A_prior(self.K, self.D)
+        Y = self.sample_Y_prior(self.K, self.T)
+
+        As = []
+        Zs = []
+        Ys = []
+
+        # Gibbs resampling
+        for i in range(iters):
+            print(f'iteration: {i}/{iters}', end='\r')
+            
+            A       = self.resample_A(F,Z)
+            Y       = self.resample_Y(Z,X,Y)
+            Z, A, Y = self.resample_Z(Z,F,X,A,Y)
+
+            Z, A, Y = self.remove_allzeros_ZAY(Z,A,Y)
+
+            As.append(A.clone().numpy())
+            Zs.append(Z.clone().numpy())
+            Ys.append(Y.clone().numpy())
+
+        return As,Zs,Ys
+    
+
+    #### PRIORS ####
+    def sample_A_prior(self,K,D):
         '''
-        Sample from prior p(A_k)
-        A_k ~ N(0,sigma_A^2 I)
+        Initialise the force basis matrix A (K x D) with a sample sample from prior p(A_k)
+        A_k ~ N(0, sigma^2_A @ I)        
         '''
         Ak_mean = torch.zeros(D)
-        Ak_cov = self.sigma_a.pow(2)*torch.eye(D)
+        Ak_cov  = self.sigma2_a*torch.eye(D)
         p_Ak = MVN(Ak_mean, Ak_cov)
+        
         A = torch.zeros(K,D)
         for k in range(K):
             A[k] = p_Ak.sample()
+        
         return A
 
-    def init_Y(self, n_filters, n_pixels):
+    def sample_Y_prior(self, K, T):
         '''
-        Sample from prior p(Y_kd)
-        Y_kd ~ Bern(epsilon)
+        Initialise the feature image matrix Y (K x T) with a sample from prior p(Y)
+        Y_kd ~ Bern(phi)
         '''
-        Y = torch.zeros(n_filters,n_pixels)
-        for k in range(n_filters):
-            for d in range(n_pixels):
-                p_Ykd = Bern(self.epsilon)
+        p_Ykd = Bern(self.phi)
+
+        Y = torch.zeros(K,T)
+        for k in range(K):
+            for d in range(T):
                 Y[k,d] = p_Ykd.sample()
         
         return Y
 
-    def left_order_form(self,Z):
-        Z_numpy = Z.clone().numpy()
-        twos = np.ones(Z_numpy.shape[0])*2.0
-        twos[0] = 1.0
-        powers = np.cumprod(twos)[::-1]
-        values = np.dot(powers,Z_numpy)
-        idx = values.argsort()[::-1]
-        return torch.from_numpy(np.take(Z_numpy,idx,axis=1))
-
-    def init_Z(self,N=20):
+    def sample_Z_prior(self, N, K):
         '''
         Samples from the IBP prior that defines P(Z).
 
@@ -66,311 +99,111 @@ class UncollapsedGibbsIBP(nn.Module):
         have already sampled dish k. Z_ik=1 if the ith customer sampled
         the kth dish and 0 otherwise.
         '''
-        Z = torch.zeros(N,self.K)
-        K = int(self.K.item())
+        Z = torch.zeros(N, K)
         total_dishes_sampled = 0
+        
         for i in range(N):
+            
             selected = torch.rand(total_dishes_sampled) < Z[:,:total_dishes_sampled].sum(dim=0) / (i+1.)
+            
             Z[i][:total_dishes_sampled][selected]=1.0
+            
             p_new_dishes = Pois(torch.tensor([self.alpha/(i+1)]))
+            
             new_dishes = int(p_new_dishes.sample().item())
+            
             if total_dishes_sampled + new_dishes >= K:
                 new_dishes = K - total_dishes_sampled
+            
             Z[i][total_dishes_sampled:total_dishes_sampled+new_dishes]=1.0
+            
             total_dishes_sampled += new_dishes
         
         return self.left_order_form(Z)
-
-    def remove_allzeros_ZAY(self,Z,A,Y):
-        """
-        Remove columns (features) from Z that are not active, and also the corresponding rows from A and Y
-        """
-        to_keep = Z.sum(dim=0) > 0
-        return Z[:, to_keep], A[to_keep, :], Y[to_keep, :]
-
-
-
-    def F_loglik_given_ZA(self,F,Z,A):
-        '''
-        p(F|Z,A) = 1/([2*pi*sigma_n^2]^(ND/2)) * exp([-1/(2*sigma_n^2)] tr((F-ZA)^T(F-ZA)))
-        '''
-        N = F.size()[0]
-        D = F.size()[1]
-        pi = np.pi
-        sig_n2 = self.sigma_n.pow(2)
-        one = torch.tensor([1.0])
-        log_first_term = one.log() - (N*D/2.)*(2*pi*sig_n2).log()
-        log_second_term = ((-1./(2*sig_n2)) * \
-            torch.trace((F-Z@A).transpose(0,1)@(F-Z@A)))
-        log_likelihood = log_first_term + log_second_term
-
-        return log_likelihood
-
-    # def X_loglik_given_ZY(self,X,Z,Y):
-    #     '''
-    #     p(X|Z,Y) = prod_n prod_d p(x_nd|Z,Y)
-    #       let e_n = Z_n,:@Y_:,n
-    #     p(x_nd=1|Z,Y) = (1 - (1-lamb)^e_n) * (1-epsilon)
-    #     p(x_nd=0|Z,Y) = (1-lamb)^e_n * (1-epsilon)
-    #     '''
-    #     N, D, K = X.shape[0], X.shape[1], Z.shape[1]
-
-    #     lamb = self.lambd
-    #     ep = self.epsilon
-
-    #     # Initialize the likelihood variable
-    #     log_likelihood = 0.0
-
-    #     # Loop over each image (or do this in a batch-wise fashion)
-    #     for i in range(N):
-    #         # Compute the effective feature activations for the i-th image
-    #         e_n = torch.matmul(Z[i, :], Y) # size (1, D)
-            
-    #         # Calculate the log-likelihood for the i-th image
-    #         log_likelihood += torch.sum(
-    #             X[i, :] * torch.log(1 - ((1 - lamb) ** e_n) * (1 - ep)) +
-    #             (1 - X[i, :]) * torch.log((1 - lamb) ** e_n * (1 - ep))
-    #         )
-
-    #     return log_likelihood
-
-    def X_loglik_given_ZY(self, X, Z, Y):
-        '''
-        Vectorized computation of p(X|Z,Y).
-        
-        p(X|Z,Y) = prod_n prod_d p(x_nd|Z,Y)
-        let e_n = Z_n,:@Y_:,n
-        p(x_nd=1|Z,Y) = (1 - (1-lamb)^e_n) * (1-epsilon)
-        p(x_nd=0|Z,Y) = (1-lamb)^e_n * (1-epsilon)
-        '''
-        lamb = self.lambd
-        ep = self.epsilon
-
-        # Compute e_n for all samples at once: Z @ Y has shape (N, D)
-        e = torch.matmul(Z, Y)
-
-        # Compute probabilities in a vectorized manner
-        p_x1 = (1 - ((1 - lamb) ** e) * (1 - ep))  # Probabilities when x_nd = 1
-               #(1 - ((1 - lamb) **e_n)* (1 - ep))
-        p_x0 = ((1 - lamb) ** e * (1 - ep))      # Probabilities when x_nd = 0
-               #((1 - lamb) ** e_n* (1 - ep))
-
-        # Avoid log(0) by clamping probabilities
-        #p_x1 = torch.clamp(p_x1, min=1e-12)
-        #p_x0 = torch.clamp(p_x0, min=1e-12)
-
-        # Compute log-likelihood in a vectorized manner
-        log_likelihood = torch.sum(
-            X * torch.log(p_x1) + (1 - X) * torch.log(p_x0)
-        )
-
-        return log_likelihood
-
-
-
-    def resample_Z_ik(self,Z,F,X,A,Y,i,k):
-        '''
-        m = number of observations not including Z_ik containing feature k
-
-        Prior: p(z_ik=1) = m / (N-1)
-        
-        Posterior combines the prior with the likelihood:
-        p(z_ik=1|Z_-nk,F,X,A,Y) propto p(z_ik=1)p(X|Z,Y)p(F|Z,A)
-        
-        Z_ik is a Bernoulli RV with this posterior probability
-        '''
-        N,D = X.size()
-        Z_k = Z[:,k]
-        
-        m = Z_k.sum() - Z_k[i] # Called m_-nk in the paper
-
-        # Store the current value of Z_ik
-        Z_ik = Z[i,k]
-
-        # If Z_nk were 0
-        #Z_if_0 = Z.clone()
-        Z[i,k] = 0
-        
-        log_prior_if_0 = (1 - (m/(N))).log()                #Prior Maybe should use N-1 instead of N?
-        F_log_likelihood_if_0 = self.F_loglik_given_ZA(F,Z,A) # Likelihood of F
-        X_log_likelihood_if_0 = self.X_loglik_given_ZY(X,Z,Y) # Likelihood of X
-
-        log_score_if_0 = log_prior_if_0 + F_log_likelihood_if_0 + X_log_likelihood_if_0
-
-        # If Z_nk were 1
-        #Z_if_1 = Z.clone()
-        Z[i,k] = 1
-        
-        log_prior_if_1 = (m/(N)).log()                      # Prior
-
-        F_log_likelihood_if_1 = self.F_loglik_given_ZA(F,Z,A) # Likelihood of F  
-        X_log_likelihood_if_1 = self.X_loglik_given_ZY(X,Z,Y) # Likelihood of X
-      
-        log_score_if_1 = log_prior_if_1 + F_log_likelihood_if_1 + X_log_likelihood_if_1
-
-        # Exp, Normalize, Sample
-        # log_scores = torch.cat((log_score_if_0,log_score_if_1),dim=0)
-        # probs = self.renormalize_log_probs(log_scores)
-        # p_znk = Bern(probs[1])
-        p0, p1 = self.renormalize_log_prob_pair(log_score_if_0, log_score_if_1)
-        p_znk = Bern(p1)
-        
-        # Change Z back to the original value
-        Z[i,k] = Z_ik
-
-        return p_znk.sample() # 0 or 1
-
-
-    def renormalize_log_probs(self,log_probs):
-        log_probs = log_probs - log_probs.max()
-        likelihoods = log_probs.exp()
-        return likelihoods / likelihoods.sum()
-
-    def renormalize_log_prob_pair(self, log_prob_0, log_prob_1):
-        """
-        Normalize two log probabilities in a pair. This is useful when we have two log probabilities that are
-        extremely small and would underflow if exponentiated directly.
-        """
-        max_p = torch.max(log_prob_0, log_prob_1)
-        log_Z = max_p + torch.log(torch.exp(log_prob_0 - max_p) + torch.exp(log_prob_1 - max_p))
-        
-        return torch.exp(log_prob_0 - log_Z), torch.exp(log_prob_1 - log_Z)
-
-    def F_loglik_given_k_new(self,cur_F_minus_ZA,Z,D,i,j):
-        '''
-        cur_F_minus_ZA is equal to F - ZA, using Z without the
-        extra j columns that are appended to compute the likelihood
-        for X|k_new=j. We have to pass this in because Z is changed
-        in a loop that calls this function.
-
-        Z: each time this function is called in the loop one level up,
-        Z has one more column. Z is N x (K + k_new=j) dimensional.
-
-        D: F.size()[1]
-
-        i: A few levels up from this function, we are looping through every datapoint,
-        and for each datapoint, considering how many new features k_new it draws. We
-        are considering the i^th datapoint.
-
-        j: We are calculating the likelihood for F|k_new = j
-        '''
-        N,K=Z.size()
-        cur_F_minus_ZA_T = cur_F_minus_ZA.transpose(0,1)
-        sig_n = self.sigma_n
-        sig_a = self.sigma_a
-
-        if j==0:
-            ret = 0.0
-        else:
-            w = torch.ones(j,j) + (sig_n/sig_a).pow(2)*torch.eye(j)
-            # alternative: torch.potrf(a).diag().prod()
-            w_numpy = w.numpy()
-            sign,log_det = np.linalg.slogdet(w_numpy)
-            log_det = torch.tensor([log_det],dtype=torch.float32)
-            # Note this is in log space
-            first_term = j*D*(sig_n/sig_a).log() - ((D/2)*log_det)
-
-            second_term = 0.5* \
-                torch.trace( \
-                cur_F_minus_ZA_T @ \
-                Z[:,-j:] @ \
-                w.inverse() @ \
-                Z[:,-j:].transpose(0,1) @ \
-                cur_F_minus_ZA) / \
-                sig_n.pow(2)
-            ret = first_term + second_term
-
-        return ret
     
-    def X_loglik_given_k_new(self, Z, Y, X, i, orig_k, k_new):
-        """
-        Calculate the log-likelihood of observing X[i, :] given Z, Y, and a proposed new feature count k_new.
+    def left_order_form(self,Z):
+        Z_numpy = Z.clone().numpy()
+        twos = np.ones(Z_numpy.shape[0])*2.0
+        twos[0] = 1.0
+        powers = np.cumprod(twos)[::-1]
+        values = np.dot(powers,Z_numpy)
+        idx = values.argsort()[::-1]
 
-        Parameters:
-        - i: int, index of the image row in X
-        - k_new: int, proposed number of new features
-        - Z: Tensor, binary matrix of shape (N, K) for current feature ownership
-        - Y: Tensor, binary matrix of shape (K, d) for feature-to-pixel activations
-        - X: Tensor, binary matrix of shape (N, d) for observed images
-        - lamb: float, efficacy parameter for feature activation
-        - ep: float, spontaneous activation probability for each pixel
-        - p: float, probability of a new feature turning on a pixel
+        return torch.from_numpy(np.take(Z_numpy,idx,axis=1))
 
-        Returns:
-        - log_likelihood: Tensor, the computed log-likelihood value for this k_new
-        """
 
-        lamb = self.lambd
-        ep = self.epsilon
-        p = self.phi
 
-        # Compute effective feature activations for the i-th image
-        e = torch.matmul(Z[i, 0:orig_k], Y[0:orig_k, :])
-        
-        # Indices of pixels that are "on" and "off" in X[i, :]
-        one_inds = [t for t in range(X.shape[1]) if X[i, t] == 1]
-        zero_inds = [t for t in range(X.shape[1]) if t not in one_inds]
-        
-        # Compute eta values for "on" and "off" pixels
-        eta_one = (1 - lamb) ** e[one_inds]
-        eta_zero = (1 - lamb) ** e[zero_inds]
-        
-        # Calculate likelihood components for pixels that are "on" and "off"
-        lhood_XiT = torch.sum(torch.log(1 - (1 - ep) * eta_one * ((1 - lamb * p) ** k_new)))
-        lhood_XiT += torch.sum(torch.log((1 - ep) * eta_zero * ((1 - lamb * p) ** k_new)))
-        
-        return lhood_XiT
-
-    def sample_k_new(self,Z,F,X,A,Y,i,truncation=10):
+    #### RESAMPLE A FOR EXISTING FEATURES ####
+    def resample_A(self, F, Z):
         '''
-        i: The loop calling this function is asking this function
-        "how many new features (k_new) should data point i draw?"
-
-        truncation: When computing the un-normalized posterior for k_new|X,Z,A, we cannot
-        compute the posterior for the infinite amount of values k_new could take on. So instead
-        we compute from 0 up to some high number, truncation, and then normalize. In practice,
-        the posterior probability for k_new is so low that it underflows past truncation=20.
+        Resample the force basis matrix A given the current feature matrix Z and the observed forces F.
+        p(A|X,Z) = N(mu,cov)
+          let mu = (Z^T @ Z + (sigma_n^2/sigma_A^2)I)^{-1} @ Z^T @ F
+          let Cov = sigma_n^2 (Z^T @ Z + (sigma_n^2/sigma_A^2)I)^{-1}
         '''
-
-        N,K = Z.size()
-        D = X.size()[1]
-
-        # # Check if we are at the maximum number of features
-        # if K == self.max_K:
-        #     return 0
-
-        p_k_new = Pois(torch.tensor([self.alpha/N]))
-        cur_F_minus_ZA = F - Z@A
+        # (Z^T Z + (sigma_n^2/sigma_A^2) I)^{-1} is repeated, so compute it once
+        temp = ((Z.T @ Z) + ((self.sigma2_n/self.sigma2_a)*torch.eye(self.K))).inverse()
+        # Calculate mean and covariance
+        mu  = temp @ Z.T @ F
+        cov = self.sigma2_n * temp
         
-        prior_poisson_probs = torch.zeros(truncation)
-        F_log_likelihood = torch.zeros(truncation)
-        X_log_likelihood = torch.zeros(truncation)
+        # Perform sampling
+        A = torch.zeros(self.K,self.D)
+        for d in range(self.D):
+            p_A = MVN(mu[:,d],cov)
+            A[:,d] = p_A.sample()
+        
+        return A
+    
 
-        for j in range(truncation):
-            # Compute the prior probability of k_new equaling j
-            prior_poisson_probs[j] = p_k_new.log_prob(torch.tensor(j))
+    
+    #### RESAMPLE Y FOR EXISTING FEATURES ####
+    def resample_Y(self, Z, X, Y, start_idx=0):
+        """
+        Sample the feature-to-pixel activation matrix Y given the current feature matrix Z and the observed images X.
+        P(Y_kt=a|Z, X, Y_-kt) 
+        propto P(Y_kt=a) * FIX 
+        """
+        # Get log prior probabilities for Y_kt = 0 and Y_kt = 1
+        log_prior_Y_kt_0 = torch.log(1 - self.phi)
+        log_prior_Y_kt_1 = torch.log(self.phi)
 
-            # Compute the log likelihood of F with k_new equaling j
-            F_log_likelihood[j] = self.F_loglik_given_k_new(cur_F_minus_ZA,Z,D,i,j)
+        # Iterate through the requested regions of Y
+        for k in range(start_idx, self.K):
+            for t in range(self.T):
+                # Calculate log posterior proportionals for Y_kt = 0 and Y_kt = 1
+                Y[k, t] = 0
+                logp_Ykt_0 = log_prior_Y_kt_0 + self.loglik_x__t_given_Zy(X[:, t:t+1], Z, Y[:, t:t+1])
+                Y[k, t] = 1
+                logp_Ykt_1 = log_prior_Y_kt_1 + self.loglik_x__t_given_Zy(X[:, t:t+1], Z, Y[:, t:t+1])
+                # Normalise to get the probabilities
+                pYkt_0, pYkt_1 = normalise_bern_logpostprop(logp_Ykt_0, logp_Ykt_1)
+                
+                # Sample the element back into Y from a Bernoulli distribution
+                Y[k, t] = Bern(pYkt_1).sample()
 
-            # Compute the log likelihood of X with k_new equaling j
-            X_log_likelihood[j] = self.X_loglik_given_k_new(Z,Y,X,i,K,j)
+        return Y
 
-            # Add new column to Z for next feature
-            zeros = torch.zeros(N)
-            Z = torch.cat((Z,torch.zeros(N,1)),1)
-            Z[i][-1]=1
+    def loglik_x__t_given_Zy(self, x__t, Z, y__t):
+        """
+        Calculate the log likelihood of x_:,t given Z and y_:,t
+        
+          let n_actfeat = Z_i,: @ y_:,t
+        P(x_:,t|Z, y_:,t) = prod_i p(x_it|Z_i, y_it) 
+        = prod_i [1 - ((1-lambda)^n_actfeat) * (1-epsilon)]^(x_it) * [((1-lambda)^n_actfeat) * (1-epsilon)]^(1-x_it)
+        """
+        # Calculate the number of active features
+        n_actfeat = torch.matmul(Z, y__t)
+        # Calculate the probability of x_it = 1
+        p_x_1 = 1 - ((((1 - self.lambd)**n_actfeat))*(1 - self.epsilon))
+        # Calculate the log likelihood
+        loglik = torch.sum(x__t * torch.log(p_x_1) + (1 - x__t) * torch.log(1 - p_x_1))
 
-        # Compute log posterior of k_new and exp/normalize
-        log_sample_probs = prior_poisson_probs + F_log_likelihood + X_log_likelihood
-        sample_probs = self.renormalize_log_probs(log_sample_probs)
+        return loglik
 
-        # Important: we changed Z for calculating p(k_new| ...) so we must take off the extra rows
-        Z = Z[:,:-truncation]
-        assert Z.size()[1] == K
-        posterior_k_new = Categorical(sample_probs)
-        return posterior_k_new.sample()
+    
 
+    #### RESAMPLE Z ####
     def resample_Z(self,Z,F,X,A,Y):
         '''
         - Re-samples existing Z_ik by using p(Z_ik=1|Z_-ik,A,X)
@@ -384,182 +217,273 @@ class UncollapsedGibbsIBP(nn.Module):
         - Adds rows to A corresponds to the new dishes.
           - p(A_new|X,Z_new,Z_old,A_old) propto p(X|Z_new,Z_old,A_old,A_new)p(A_new)
         '''
-
-        N = F.size()[0]
-        K = A.size()[0]
         
         # Iterate over each data point
-        for i in range(N):
-            # Resample existing Z_ik
-            for k in range(K):
-                Z[i,k] = self.resample_Z_ik(Z,F,X,A,Y,i,k)
-            
-            k_new = 0
-            current_k = A.size()[0]
-            if current_k < self.max_K:
-            # Decide how many new features to draw
-                k_new = self.sample_k_new(Z,F,X,A,Y,i)
+        for i in range(self.N):
+            # Start collecting Z_ik to set to 0
+            marked_Z_ik = torch.ones(self.K)
 
-                # Limit such that current_k + k_new <= max_K
-                k_new = np.clip(k_new, 0, self.max_K - current_k)
+            # Iterate over each feature
+            for k in range(self.K):
+                # Count the number of objects that have feature k without the current object (Called m_-nk in the paper)
+                m = Z[:,k].sum() - Z[i,k] 
+                # Sample Z_ik
+                if m > 0:
+                    Z[i,k] = self.resample_Z_ik(F, X, A, Y, Z, i, k, m)
+                else:
+                    marked_Z_ik[k] = 0
+            
+            # Zero marked Z_iks
+            Z[i] = Z[i] * marked_Z_ik
+            
+            # Sample the number of new features k_new
+            k_new = self.sample_k_new_clipped(Z,F,X,A,Y,i)
 
             # If new features are drawn, add them to Z, A, and Y
             if k_new > 0:
+                # Get new columns for Z
+                Z_new = self.Z_new(k_new, self.N, i)
+                # Get new rows for A
+                A_new = self.A_new(F,Z_new,Z,A)
                 # Add new columns to Z
-                Z = torch.cat((Z,torch.zeros(N,k_new)),1)
-                for j in range(k_new):
-                    Z[i][-(j+1)] = 1
-
-                # Add new rows to A, based on Z and A
-                A_new = self.A_new(F,k_new,Z,A)
+                Z = torch.cat((Z,Z_new),dim=1)
+                # Add new rows to A
                 A = torch.cat((A,A_new),dim=0)
-
-                # Add new rows to Y, based on Z and Y
-                Y_new = self.Y_new(k_new,Y.size()[1])
+                # Get new rows for Y
+                Y_new = self.Y_new(k_new, self.T)
+                # Add new rows to Y
                 Y = torch.cat((Y,Y_new),dim=0)
-                # resample Y_new at the new features
-                Y = self.resample_Y(Z, X, Y, start_idx=K)
+                # update K
+                self.K += k_new
+                # resample Y at the rows of the new features
+                Y = self.resample_Y(Z, X, Y, start_idx=self.K-k_new)
 
         return Z, A, Y
 
-    def resample_A(self,F,Z):
-        '''
-        mu = (Z^T Z + (sigma_n^2 / sigma_A^2) I )^{-1} Z^T  X
-        Cov = sigma_n^2 (Z^T Z + (sigma_n^2/sigma_A^2) I)^{-1}
-        p(A|X,Z) = N(mu,cov)
-        '''
-        N,D = F.size()
-        K = Z.size()[1]
-        ZT = Z.transpose(0,1)
-        ZTZ = ZT@Z
-        I = torch.eye(K)
-        sig_n = self.sigma_n
-        sig_a = self.sigma_a
-        mu = (ZTZ + (sig_n/sig_a).pow(2)*I).inverse()@ZT@F
-        cov = sig_n.pow(2)*(ZTZ + (sig_n/sig_a).pow(2)*I).inverse()
-        A = torch.zeros(K,D)
-        for d in range(D):
-            p_A = MVN(mu[:,d],cov)
-            A[:,d] = p_A.sample()
-        return A
 
-    def A_new(self,F,k_new,Z,A):
+    #### RESAMPLE Z FOR EXISTING FEATURES ####
+    def resample_Z_ik(self,F, X, A, Y, Z, i, k, m):
         '''
-        p(A_new | X, Z_new, Z_old, A_old) propto
-            p(X|Z_new,Z_old,A_old,A_new)p(A_new)
+        Resample Z_ik given Z_-ik, F, X, A, Y, and i
+        P(z_i,k=a|f_i,:,x_i,:,A,Y,Z_-ik)
+        propto P(z_i,k=a) * P(x_i,:|z_i,:,Y) * p(f_i,:|z_i,:,A)
+        P(z_i,k=a) = (m_(-nk)/N)^a * (1 - m_(-nk)/N)^(1-a)
+          let m_(-nk) = sum_n Z_n,k - Z_i,k
+        '''
+        
+        # Calculate priors for Z_ik = 0 and Z_ik = 1
+        log_prior_Z_ik_0 = (1 - (m/(self.N))).log()
+        log_prior_Z_ik_1 = (m/(self.N)).log()
+
+        # Calculate log posterior proportionals for Z_ik = 0 and Z_ik = 1
+        Z[i, k] = 0
+        logp_Z_ik_0 = log_prior_Z_ik_0 \
+            + self.loglik_x_i__given_Yz(X[i:i+1, :], Y, Z[i:i+1, :]) \
+            + self.loglik_f_i__given_Az(F[i:i+1, :], A, Z[i:i+1, :])
+        
+        Z[i, k] = 1
+        logp_Z_ik_1 = log_prior_Z_ik_1 \
+            + self.loglik_x_i__given_Yz(X[i:i+1, :], Y, Z[i:i+1, :]) \
+            + self.loglik_f_i__given_Az(F[i:i+1, :], A, Z[i:i+1, :])
+        
+        # Normalise to get the probabilities
+        p_Z_ik_0, p_Z_ik_1 = normalise_bern_logpostprop(logp_Z_ik_0, logp_Z_ik_1)
+
+        return Bern(p_Z_ik_1).sample()
+
+    def loglik_x_i__given_Yz(self, x_i_, Y, z_i_):
+        """
+        Calculate the log likelihood of x_i,: given Y and z_i,:
+        
+          let n_actfeat = z_i,: @ y_:,t
+        P(x_i,:| Y, z_i,:) 
+        = prod_t p(x_it| z_i,: , y_i,:) 
+        = prod_t [1 - ((1-lambda)^n_actfeat) * (1-epsilon)]^(x_it) * [((1-lambda)^n_actfeat) * (1-epsilon)]^(1-x_it)
+        """
+        # Calculate the number of active features
+        n_actfeat = torch.matmul(z_i_, Y)
+        # Calculate the probability of x_it = 1
+        p_x_1 = 1 - ((1 - self.lambd) ** n_actfeat) * (1 - self.epsilon)
+        # Calculate the log likelihood
+        loglik = torch.sum(x_i_ * torch.log(p_x_1) + (1 - x_i_) * torch.log(1 - p_x_1))
+
+        return loglik
+
+    def loglik_f_i__given_Az(self, f_i_, A, z_i_):
+        '''
+        Calculate the log likelihood of f_i,: given z_i,: and A
+          let n_actfeat = z_i,: @ y_:,t
+        p(f_i,:|z_i,:,A) 
+        = 1/([2*pi*sigma^2_n]^(D/2)) * exp(-1/(2 * sigma^2_n) * (f_i,:- z_i,: @ A)^T @ (f_i,:- z_i,: @ A))
+        '''
+        # Calculate log of 1/([2*pi*sigma_n^2]^(D/2))
+        log_first_term = torch.tensor([1.0]).log() - (self.D/2.)*(2*np.pi*self.sigma2_n).log()
+        # Calculate -1/2 sigma^2_n * (f_i,:- z_i,: @ A)^T @ (f_i,:- z_i,: @ A)
+        log_second_term = (-(1/(2*self.sigma2_n)) * (f_i_-z_i_@A)@(f_i_-z_i_@A).T) # torch transpose reversed
+        
+        log_likelihood = log_first_term + log_second_term[0]
+
+        return log_likelihood
+
+
+    #### SAMPLE K_NEW ####
+    def sample_k_new(self,Z,F,X,A,Y,i,truncation=10):
+        '''
+        Sample the number of new features k_new for the i-th data point.
+        P(k_new|x_i,:,f_i,:,z_i,:,A,Y) 
+        = P(k_new) * P(f_i,:|z_i,:,A,k_new) * P(x_i,:|z_i,:,Y,k_new)
+        '''
+
+        # Compute the prior over k_new
+        p_k_new = Pois(torch.tensor([self.alpha/self.N]))        
+        prior_poisson_probs = torch.zeros(truncation)
+
+        # Compute the log likelihood of F with k_new equaling j
+        F_log_likelihood    = torch.zeros(truncation)
+        X_log_likelihood    = torch.zeros(truncation)
+
+        for j in range(truncation):
+            # Compute the prior probability of k_new equaling j
+            prior_poisson_probs[j]  = p_k_new.log_prob(torch.tensor(j))
+            # Compute the log likelihood of F with k_new equaling j
+            F_log_likelihood[j]     = self.loglik_f_i__given_Az_Knew(F[i:i+1, :], A ,Z[i:i+1, :], j)
+            # Compute the log likelihood of X with k_new equaling j
+            X_log_likelihood[j]     = self.loglik_x_i__given_Yz_Knew(X[i:i+1, :], Y, Z[i:i+1, :], j)
+
+        # Compute log posterior of k_new and exp/normalize
+        log_sample_probs = prior_poisson_probs + F_log_likelihood + X_log_likelihood
+        sample_probs = renormalize_log_probs(log_sample_probs)
+
+        # Sample k_new from the posterior
+        return Categorical(sample_probs).sample()
+    
+    def loglik_x_i__given_Yz_Knew(self, x_i_, Y, z_i_, k_new):
+        """
+        Calculate the log likelihood of x_i,: given Y and z_i,: while marginalizing over the new features k_new.
+        
+          let n_actfeat = z_i,: @ y_:,t
+        P(x_i,:| Y, z_i,:) 
+        = prod_t [1 - (1-epsilon) * ((1-lambda)^n_actfeat) * (1-lambda*phi)^K_new]^(x_it) * [(1-epsilon) * ((1-lambda)^n_actfeat) * (1-lambda*phi)^K_new]^(1-x_it)
+        """
+        # Calculate the number of active features
+        n_actfeat = torch.matmul(z_i_, Y)
+        # Calculate the probability of x_it = 1
+        p_x_1 = 1 - (1 - self.epsilon) * ((1 - self.lambd) ** n_actfeat) * ((1 - self.lambd*self.phi) ** k_new)
+        # Calculate the log likelihood
+        loglik = torch.sum(x_i_ * torch.log(p_x_1) + (1 - x_i_) * torch.log(1 - p_x_1))
+
+        return loglik
+    
+    def loglik_f_i__given_Az_Knew(self, f_i_, A, z_i_, k_new):
+        '''
+        Calculate the log likelihood of f_i,: given z_i,: and A and K_new
+          let mu = z_i,: @ A
+          let cov = sigma^2_n + k_new * sigma^2_a @ I
+          let det(cov) = sigma^2_n + k_new * sigma^2_a 
+        p(f_i,:|z_i,:,A) 
+        = 1/[2 pi det(cov)]^{D/2} * exp(-1/(2 det(cov)) * (f_i,:- z_i,: @ A)^T (f_i,:- z_i,: @ A))
+        '''
+
+        # Calculate log of 1/([2*pi*sigma_n^2]^(D/2))
+        log_first_term = torch.tensor([1.0]).log() - (self.D/2.)*(2*np.pi*(self.sigma2_n + k_new*self.sigma2_a)).log()
+        # Calculate [-1/2 sigm * (f_i,:- z_i,: @ A)^T @ cov^{-1} @ (f_i,:- z_i,: @ A)]
+        log_second_term = (-(1/(2*(self.sigma2_n + k_new*self.sigma2_a))) * (f_i_-z_i_@A) @ (f_i_-z_i_@A).T) # torch transpose reversed
+        
+        log_likelihood = log_first_term + log_second_term[0]
+
+        return log_likelihood
+    
+    def sample_k_new_clipped(self,Z,F,X,A,Y,i,truncation=10):
+        """
+        Wrapper function for sample_k_new that clips the output to be between 0 and max_K - current_K.
+        also avoids executing if K is already at max_K
+        """
+        # If K is not at max_K, sample k_new
+        if self.K < self.max_K:
+            # Decide how many new features to draw
+            k_new = self.sample_k_new(Z,F,X,A,Y,i,truncation)
+
+            # Limit such that current_k + k_new <= max_K
+            k_new = np.clip(k_new, 0, self.max_K - self.K)
+        else:
+            k_new = 0
+
+        return k_new
+
+
+    #### NEW MATRIX SECTIONS ####
+    def A_new(self,F,Z_new,Z,A):
+        '''
+        p(A_new | F, Z_new, Z, A) 
+        propto p(F | Z_new, Z, A, A_new) * p(A_new)
         ~ N(mu,cov)
             let ones = knew x knew matrix of ones
-            let sig_n2 = sigma_n^2
-            let sig_A2 = sigma_A^2
-            mu =  (ones + sig_n2/sig_a2 I)^{-1} Z_new_T (X - Z_old A_old)
-            cov = sig_n2 (ones + sig_n2/sig_A2 I)^{-1}
+            mu  = (ones + sig_n2/sig_a2 I)^{-1} @ Z_new_T @ (F - Z_old A_old)
+            cov = sigma^2_n (ones + sig_n2/sig_A2 @ I)^{-1}
         '''
-        N,D = F.size()
-        K = Z.size()[1]
-        assert K == A.size()[0]+k_new
-        ones = torch.ones(k_new,k_new)
-        I = torch.eye(k_new)
-        sig_n = self.sigma_n
-        sig_a = self.sigma_a
-        Z_new = Z[:,-k_new:]
-        Z_old = Z[:,:-k_new]
-        Z_new_T = Z_new.transpose(0,1)
-        # mu is k_new x D
-        mu = (ones + (sig_n/sig_a).pow(2)*I).inverse() @ \
-            Z_new_T @ (F - Z_old@A)
-        # cov is k_new x k_new
-        cov = sig_n.pow(2) * (ones + (sig_n/sig_a).pow(2)*I).inverse()
-        A_new = torch.zeros(k_new,D)
-        for d in range(D):
+        k_new = Z_new.size()[1]
+        # (ones + sig_n2/sig_a2 I)^{-1} is repeated, so compute it once
+        temp = (torch.ones(k_new,k_new) + ((self.sigma2_n/self.sigma2_a) * torch.eye(k_new))).inverse()
+        # Compute mean and covariance
+        mu = temp @ Z_new.T @ (F - (Z@A))
+        cov = self.sigma2_n * temp
+        
+        # Perform sampling
+        A_new = torch.zeros(k_new,self.D)
+        for d in range(self.D):
             p_A = MVN(mu[:,d],cov)
             A_new[:,d] = p_A.sample()
+        
         return A_new
-
-    def resample_Y(self, Z, X, Y, start_idx=0):
+                    
+    def Y_new(self, k_new, T):
         """
-        Sample the feature-to-pixel activation matrix Y given the current feature matrix Z and the observed images X.
+        When initialised, the new features are not active in any of the images.
         """
-        K = Z.size()[1]
-        N, T = X.size()
-        ep = self.epsilon
-        lamb = self.lambd
-        p = self.phi
+        return torch.zeros(k_new, T)
+    
+    def Z_new(self, k_new, N, i):
+        """
+        When initialised, the new features are only active in the i-th image.
+        """
+        Z_new = torch.zeros(N, k_new)
+        Z_new[i,:] = 1.0
 
-        pY_a0 = torch.zeros(K, T)
-        pY_a1 = torch.zeros(K, T)
-        
-        prior_Y_a0 = torch.log(1 - p)
-        prior_Y_a1 = torch.log(p)
+        return Z_new
+    
 
-        for t in range(T):
-            for k in range(start_idx, K):
-                for a in [0, 1]:
-                    Y[k, t] = a
+    #### CLEANUP STEP ####
+    def remove_allzeros_ZAY(self,Z,A,Y):
+        """
+        Remove columns (features) from Z that are not active, and also the corresponding rows from A and Y
+        """
+        to_keep = Z.sum(dim=0) > 0
+        self.K = to_keep.sum()
+        return Z[:, to_keep], A[to_keep, :], Y[to_keep, :]
+    
 
-                    e = torch.matmul(Z, Y[:, t])
-                    # Compute the total log-likelihood
-                    log_likelihood = torch.sum(
-                        (X[:,t])  *torch.log(1-((1-lamb)**e)*(1-ep)) + \
-                        (1-X[:,t])*torch.log(   (1-lamb)**e)*(1-ep)
-                        )
+def normalise_bern_logpostprop(log_postprop_0, log_postprop_1):
+    """
+    Get the normalised probabilities from two log posterior proportionals.
+        let maxp = max(log_postprop_0, log_postprop_1)
+        let minp = min(log_postprop_0, log_postprop_1)
+        let logZ = maxp + log(1 + exp(minp - maxp))
+      p0 = exp(log_postprop_0 - logZ)
+      p1 = exp(log_postprop_1 - logZ)
+    """
+    maxp = torch.max(log_postprop_0, log_postprop_1)
+    minp = torch.min(log_postprop_0, log_postprop_1)
+    logZ = maxp + torch.log(1 + torch.exp(minp - maxp))
 
-                    if a == 0:
-                        temp_lpY_a0 = prior_Y_a0 + log_likelihood
-                    else:
-                        temp_lpY_a1 = prior_Y_a1 + log_likelihood
+    p0 = torch.exp(log_postprop_0 - logZ)
+    p1 = torch.exp(log_postprop_1 - logZ)
 
-                # Normalise in log space to avoid underflows
-                # max_p = torch.max(temp_lpY_a0, temp_lpY_a1)
-                # log_Z = max_p + torch.log(torch.exp(temp_lpY_a0 - max_p) + torch.exp(temp_lpY_a1 - max_p))
-                # pY_a0[k, t] = torch.exp(temp_lpY_a0 - log_Z)
-                # pY_a1[k, t] = torch.exp(temp_lpY_a1 - log_Z)
-                pY_a0[k, t], pY_a1[k, t] = self.renormalize_log_prob_pair(temp_lpY_a0, temp_lpY_a1)
+    return p0, p1
 
-                # Sample the element
-                p_Ykt = Bern(pY_a1[k, t])
-                Y[k, t] = p_Ykt.sample()
-
-        return Y
-                
-                
-    def Y_new(self, k_new, D):
-        
-        return torch.zeros(k_new, D) 
-
-
-    def gibbs(self, F, X, iters):
-        n_obs_X, n_pixels = X.size()
-        n_obs_F, n_features = F.size()
-        assert n_obs_X == n_obs_F, "Number of observations in X and F must match"
-        n_obs = n_obs_X
-
-        K = self.K
-
-        Z = self.init_Z(n_obs)
-        A = self.init_A(K, n_features)
-        Y = self.init_Y(K, n_pixels)
-
-        As = []
-        Zs = []
-        Ys = []
-
-        for i in range(iters):
-            print(f'iteration: {i}/{iters}', end='\r')
-            # Gibbs resampling
-            A       = self.resample_A(F,Z)
-            Y       = self.resample_Y(Z,X,Y)
-            Z, A, Y = self.resample_Z(Z,F,X,A,Y)
-
-            # cleanup
-            Z, A, Y = self.remove_allzeros_ZAY(Z,A,Y)
-
-            # save the samples to the chain
-            As.append(A.clone().numpy())
-            Zs.append(Z.clone().numpy())
-            Ys.append(Y.clone().numpy())
-
-        return As,Zs,Ys
-
+def renormalize_log_probs(log_probs):
+    log_probs = log_probs - log_probs.max()
+    likelihoods = log_probs.exp()
+    return likelihoods / likelihoods.sum()
 
 # Import cProfile
 # inf = UncollapsedGibbsIBP(alpha=0.05, K=1, max_K=4, sigma_a=0.2, sigma_n=0.1, epsilon=0.05, lambd=0.99, phi=0.25)
