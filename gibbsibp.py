@@ -29,9 +29,9 @@ class UncollapsedGibbsIBP(nn.Module):
         n_obs_X, n_pixels   = X.size()
         assert n_obs_X == n_obs_F, "Number of observations in X and F must match"
         
-        self.N = n_obs_X
-        self.D = n_features
-        self.T = n_pixels
+        self.N:int = n_obs_X    # Number of data points
+        self.D:int = n_features # Force dimension
+        self.T:int = n_pixels   # Pixel dimension
         
         # Initalize Z, A, and Y from the priors
         Z = self.sample_Z_prior(self.N, self.K)
@@ -137,52 +137,76 @@ class UncollapsedGibbsIBP(nn.Module):
     def resample_A(self, F, Z):
         '''
         Resample the force basis matrix A given the current feature matrix Z and the observed forces F.
-        p(A|X,Z) = N(mu,cov)
+        p(A|X,Z) = N(mu,cov) [implemented in `posterior_param_A`]
           let mu = (Z^T @ Z + (sigma_n^2/sigma_A^2)I)^{-1} @ Z^T @ F
           let Cov = sigma_n^2 (Z^T @ Z + (sigma_n^2/sigma_A^2)I)^{-1}
         '''
+        mu, cov = self.posterior_param_A(F, Z)
+        
+        # Perform sampling
+        A = torch.zeros(self.K,self.D)
+        for k in range(self.K):
+            p_A = MVN(mu[k,:],cov)
+            A[k,:] = p_A.sample()
+        
+        return A
+    
+    def posterior_param_A(self, F, Z):
+        """
+        Calculate the posterior parameters (mean, covariance) for A given Z and F.
+
+        p(A|X,Z) = N(mu,cov)
+          let mu = (Z^T @ Z + (sigma_n^2/sigma_A^2)I)^{-1} @ Z^T @ F
+          let Cov = sigma_n^2 (Z^T @ Z + (sigma_n^2/sigma_A^2)I)^{-1}
+        """
         # (Z^T Z + (sigma_n^2/sigma_A^2) I)^{-1} is repeated, so compute it once
         temp = ((Z.T @ Z) + ((self.sigma2_n/self.sigma2_a)*torch.eye(self.K))).inverse()
         # Calculate mean and covariance
         mu  = temp @ Z.T @ F
         cov = self.sigma2_n * temp
-        
-        # Perform sampling
-        A = torch.zeros(self.K,self.D)
-        for d in range(self.D):
-            p_A = MVN(mu[:,d],cov)
-            A[:,d] = p_A.sample()
-        
-        return A
-    
 
+        return mu, cov
     
     #### RESAMPLE Y FOR EXISTING FEATURES ####
     def resample_Y(self, Z, X, Y, start_idx=0):
         """
         Sample the feature-to-pixel activation matrix Y given the current feature matrix Z and the observed images X.
-        P(Y_kt=a|Z, X, Y_-kt) 
-        propto P(Y_kt=a) * FIX 
+        
+        P(Y_kt=a|Z, X, Y_-kt) [implemented in `posterior_param__Y_kt`]
+        propto P(Y_kt=a) * P(X|Z, Y)|Y_kt=a 
         """
-        # Get log prior probabilities for Y_kt = 0 and Y_kt = 1
-        log_prior_Y_kt_0 = torch.log(1 - self.phi)
-        log_prior_Y_kt_1 = torch.log(self.phi)
-
         # Iterate through the requested regions of Y
         for k in range(start_idx, self.K):
             for t in range(self.T):
-                # Calculate log posterior proportionals for Y_kt = 0 and Y_kt = 1
-                Y[k, t] = 0
-                logp_Ykt_0 = log_prior_Y_kt_0 + self.loglik_x__t_given_Zy(X[:, t:t+1], Z, Y[:, t:t+1])
-                Y[k, t] = 1
-                logp_Ykt_1 = log_prior_Y_kt_1 + self.loglik_x__t_given_Zy(X[:, t:t+1], Z, Y[:, t:t+1])
-                # Normalise to get the probabilities
-                pYkt_0, pYkt_1 = normalise_bern_logpostprop(logp_Ykt_0, logp_Ykt_1)
-                
+                # Calculate the posterior probability of Y_kt = 1
+                pY_kt_1 = self.posterior_param_Y_kt(Z, X, Y, k, t)
                 # Sample the element back into Y from a Bernoulli distribution
-                Y[k, t] = Bern(pYkt_1).sample()
+                Y[k,t] = Bern(pY_kt_1).sample()
 
         return Y
+
+    def posterior_param_Y_kt(self, Z, X, Y, k, t):
+        """
+        Calculate the posterior parameter for Y_kt, which is the probability P(Y_kt=1) given Z, X, and Y_-kt.
+        
+        P(Y_kt=a|Z, X, Y_-kt) 
+        propto P(Y_kt=a) * P(X|Z, Y)|Y_kt=a
+        P(Y_kt=a) = phi^a * (1-phi)^(1-a)
+        P(X|Z, Y) implemented in `loglik_x__t_given_Zy`
+        """
+        # Calculate log posterior proportionals for Y_kt = 0 and Y_kt = 1 
+        Y[k, t] = 0
+        logp_Ykt_0 = torch.log(1 - self.phi)\
+            + self.loglik_x__t_given_Zy(X[:, t:t+1], Z, Y[:, t:t+1])
+        Y[k, t] = 1
+        logp_Ykt_1 = torch.log(self.phi)    \
+            + self.loglik_x__t_given_Zy(X[:, t:t+1], Z, Y[:, t:t+1])
+        
+        # Normalise to get the probabilities
+        pYkt_0, pYkt_1 = normalise_bern_logpostprop(logp_Ykt_0, logp_Ykt_1)
+
+        return pYkt_1
+
 
     def loglik_x__t_given_Zy(self, x__t, Z, y__t):
         """
@@ -227,14 +251,16 @@ class UncollapsedGibbsIBP(nn.Module):
             for k in range(self.K):
                 # Count the number of objects that have feature k without the current object (Called m_-nk in the paper)
                 m = Z[:,k].sum() - Z[i,k] 
-                # Sample Z_ik
                 if m > 0:
-                    Z[i,k] = self.resample_Z_ik(F, X, A, Y, Z, i, k, m)
+                    # Sample Z_ik
+                    pZ_ik_1 = self.posterior_param_Z_ik(F, X, A, Y, Z, i, k, m)
+                    Z[i,k] = Bern(pZ_ik_1).sample()
                 else:
+                    # Mark Z_ik to be set to 0
                     marked_Z_ik[k] = 0
             
             # Zero marked Z_iks
-            Z[i] = Z[i] * marked_Z_ik
+            Z[i] *= marked_Z_ik
             
             # Sample the number of new features k_new
             k_new = self.sample_k_new_clipped(Z,F,X,A,Y,i)
@@ -262,13 +288,16 @@ class UncollapsedGibbsIBP(nn.Module):
 
 
     #### RESAMPLE Z FOR EXISTING FEATURES ####
-    def resample_Z_ik(self,F, X, A, Y, Z, i, k, m):
+    def posterior_param_Z_ik(self,F, X, A, Y, Z, i, k, m):
         '''
-        Resample Z_ik given Z_-ik, F, X, A, Y, and i
+        Calculate the posterior parameter for P(Z_ik=1) given Z_-ik, F, X, A, Y, and i
+        
         P(z_i,k=a|f_i,:,x_i,:,A,Y,Z_-ik)
         propto P(z_i,k=a) * P(x_i,:|z_i,:,Y) * p(f_i,:|z_i,:,A)
         P(z_i,k=a) = (m_(-nk)/N)^a * (1 - m_(-nk)/N)^(1-a)
           let m_(-nk) = sum_n Z_n,k - Z_i,k
+        P(x_i,:|z_i,:,Y) implemented in `loglik_x_i__given_Yz`
+        P(f_i,:|z_i,:,A) implemented in `loglik_f_i__given_Az`
         '''
         
         # Calculate priors for Z_ik = 0 and Z_ik = 1
@@ -289,7 +318,7 @@ class UncollapsedGibbsIBP(nn.Module):
         # Normalise to get the probabilities
         p_Z_ik_0, p_Z_ik_1 = normalise_bern_logpostprop(logp_Z_ik_0, logp_Z_ik_1)
 
-        return Bern(p_Z_ik_1).sample()
+        return p_Z_ik_1
 
     def loglik_x_i__given_Yz(self, x_i_, Y, z_i_):
         """
@@ -461,6 +490,53 @@ class UncollapsedGibbsIBP(nn.Module):
         self.K = to_keep.sum()
         return Z[:, to_keep], A[to_keep, :], Y[to_keep, :]
     
+
+    #### LIKELHOODS FOR FORWARD DATA GENERATION ####
+    def F_likelihood_sample(self,Z,A):
+        """
+        Sample forces, given the feature matrix Z and the force basis matrix A.
+        sample ~ p(F|Z,A) = N(ZA,sigma_n2 I)
+        """
+        # Calculate the mean of the Gaussian
+        mu = Z @ A 
+        N = mu.size()[0]
+        D = mu.size()[1]
+
+        # Set the covariance matrix
+        cov = self.sigma2_n * torch.eye(D)
+
+        # Perform sampling
+        sample = torch.zeros_like(mu)
+        for n in range(N):
+            p_F = MVN(mu[n,:],cov)
+            sample[n,:] = p_F.sample()
+        
+        return sample
+    
+    def X_likelihood_sample(self,Z,Y):
+        """
+        Sample images, given the feature matrix Z and the pixel activation matrix Y.
+        sample ~ p(X|Z,Y) = Bernoulli(p)
+          let p = 1 - (1-lambda)^(Z @ Y)*(1-epsilon)
+        """
+        # Calculate the number of features with active pixels at each location in each image
+        n_actfeat = torch.matmul(Z, Y)
+        
+        # Calculate the probability of each pixel being active
+        p_x_1 = 1 - (((1 - self.lambd) ** n_actfeat) * (1 - self.epsilon))
+
+        # Perform sampling
+        sample = torch.zeros_like(p_x_1)
+        for i in range(p_x_1.size()[0]):
+            for j in range(p_x_1.size()[1]):
+                p_X = Bern(p_x_1[i,j])
+                sample[i,j] = p_X.sample()
+
+        return sample
+
+
+        
+
 
 def normalise_bern_logpostprop(log_postprop_0, log_postprop_1):
     """
