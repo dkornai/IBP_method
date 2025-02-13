@@ -152,7 +152,7 @@ The complete algorithm is
 			\FOR{$i = 1$ to $N$}
 				\vspace{0.2cm}
 				\FOR{$k = 1$ to $K$} 
-					\STATE $m_{-i,k} \gets \sum_{j\not=k}^{N}z_{j,k}$ \hfill \COMMENT{Count objects that own feature $k$ without considering object $i$}
+					\STATE $m_{-i,k} \gets \sum_{i\not=k}^{N}z_{i,k}$ \hfill \COMMENT{Count objects that own feature $k$ without considering object $i$}
 					\IF{$m_{-i,k} > 0$}
 						\STATE $z_{i,k} \gets P(z_{i,k}|\mathbf{f}_{i,:}, \mathbf{x}_{i,:}, \mathbf{A}, \mathbf{Y}, \mathbf{Z}_{-i,k})$ \hfill \COMMENT{Resample $z_{i,k}$ according to Eq. \ref{eq:posterior_Zik}}
 					\ELSE
@@ -288,5 +288,8 @@ Note how this reduces to the basic likelihood if  $K^{new}_i = 0$.
 			&\quad \sim \mathcal{N}\left( \left(1_{k_{new}\times k_{new}}  + \frac{\sigma^2_n}{\sigma^2_A}\mathbf{I}\right)^{-1} \mathbf{Z}^T_{new} (\mathbf{F} - \mathbf{Z} \mathbf{A}), \sigma^2_n \left(1_{k_{new}\times k_{new}}  + \frac{\sigma^2_n}{\sigma^2_A}\mathbf{I}\right)^{-1}  \right)
 		\end{split}
 	\end{align}
+
+\section{Validation Measures}
+
 
 \end{document}
