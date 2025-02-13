@@ -71,7 +71,7 @@ Our prior expectation is that rows of $\mathbf{A}$ are drawn from $\mathcal{N}(0
 	\mathbf{f}_{n,:} = \mathbf{z}_{n,:}\mathbf{A} + \epsilon \sim \mathcal{N}(0, \sigma^2_n, \mathbf{I})
 \end{equation*}
 
-Each element of $\mathbf{Y}$ is drawn independently as $y_{i,k} \sim \text{Bernoulli}(\phi)$. The entries of $\mathbf{X}$ are conditionally independent given the latents, and are assumed to be generated from a \textit{noisy-OR} distribution
+Our prior is that each element of $\mathbf{Y}$ is drawn independently as $y_{i,k} \sim \text{Bernoulli}(\phi)$. The entries of $\mathbf{X}$ are conditionally independent given the latents, and are assumed to be generated from a \textit{noisy-OR} distribution
 \begin{equation*}
 	P(x_{i,t} = 1 | \mathbf{Z}, \mathbf{Y}) = 1 - (1-\lambda)^{\mathbf{z}_{i,:}\mathbf{y}_{:,t}}(1-\epsilon)
 \end{equation*}

@@ -145,9 +145,9 @@ class UncollapsedGibbsIBP(nn.Module):
         
         # Perform sampling
         A = torch.zeros(self.K,self.D)
-        for k in range(self.K):
-            p_A = MVN(mu[k,:],cov)
-            A[k,:] = p_A.sample()
+        for d in range(self.D):
+            p_A = MVN(mu[:,d],cov)
+            A[:,d] = p_A.sample()
         
         return A
     
@@ -207,7 +207,7 @@ class UncollapsedGibbsIBP(nn.Module):
 
         return pYkt_1
 
-
+    @torch.compile
     def loglik_x__t_given_Zy(self, x__t, Z, y__t):
         """
         Calculate the log likelihood of x_:,t given Z and y_:,t
@@ -320,6 +320,7 @@ class UncollapsedGibbsIBP(nn.Module):
 
         return p_Z_ik_1
 
+    @torch.compile
     def loglik_x_i__given_Yz(self, x_i_, Y, z_i_):
         """
         Calculate the log likelihood of x_i,: given Y and z_i,:
@@ -338,6 +339,7 @@ class UncollapsedGibbsIBP(nn.Module):
 
         return loglik
 
+    @torch.compile
     def loglik_f_i__given_Az(self, f_i_, A, z_i_):
         '''
         Calculate the log likelihood of f_i,: given z_i,: and A
@@ -386,6 +388,7 @@ class UncollapsedGibbsIBP(nn.Module):
         # Sample k_new from the posterior
         return Categorical(sample_probs).sample()
     
+    @torch.compile
     def loglik_x_i__given_Yz_Knew(self, x_i_, Y, z_i_, k_new):
         """
         Calculate the log likelihood of x_i,: given Y and z_i,: while marginalizing over the new features k_new.
@@ -403,6 +406,7 @@ class UncollapsedGibbsIBP(nn.Module):
 
         return loglik
     
+    @torch.compile
     def loglik_f_i__given_Az_Knew(self, f_i_, A, z_i_, k_new):
         '''
         Calculate the log likelihood of f_i,: given z_i,: and A and K_new
